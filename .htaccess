@@ -1,0 +1,25 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+ 
+    # Ensure asset files load correctly (CSS, JS, images)
+    RewriteCond %{REQUEST_URI} !\.(css|js|gif|jpe?g|png|svg|woff|woff2|ttf|eot|ico|webp)$ [NC]
+    
+    # Prevent looping by avoiding redirecting existing files/folders
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    # RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+ 
+# Security: Prevent access to environment files
+<FilesMatch "^\.env.*">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+ 
+# Security: Prevent access to sensitive directories
+RedirectMatch 403 /(vendor|storage|node_modules)/
+ 
+# Disable directory listing
+Options -Indexes
+ RewriteRule ^(.*)$ public/$1 [L]

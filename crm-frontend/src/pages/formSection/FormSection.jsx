@@ -1,0 +1,230 @@
+import React, { useEffect, useState, useCallback, useContext } from "react";
+import DataTable from "react-data-table-component";
+import debounce from "lodash.debounce";
+import Swal from "sweetalert2";
+import { getFormSections, addFormSection, updateFormSection, viewFormSection, updateFormSectionStatus, deleteFormSection } from "../../services/formSectionService";
+import { getBranchSubbranchDropdown } from "../../services/branchService";
+import { UserContext } from "../../context/UserContext";
+
+const FormSection = () => {
+  const [formSections, setFormSections] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  const [search, setSearch] = useState("");
+  const [totalRows, setTotalRows] = useState(0);
+  const [perPage, setPerPage] = useState(10);
+  const [page, setPage] = useState(1);
+  const [sortColumn, setSortColumn] = useState("id");
+  const [sortDirection, setSortDirection] = useState("desc");
+
+  const [branchOptions, setBranchOptions] = useState([]);
+  const [viewData, setViewData] = useState(null);
+  const [deleteId, setDeleteId] = useState(null);
+
+  const [modalMode, setModalMode] = useState("add");
+  const [formData, setFormData] = useState({
+    id: null,
+    branch_id: "",
+    name: "",
+    status: 1,
+  });
+
+  const { user } = useContext(UserContext);
+  const isAdminOrOwner = user?.role_id === 1 || user?.role_id === 2;
+
+  const loadBranches = async () => {
+    if (!isAdminOrOwner) return;
+    const res = await getBranchSubbranchDropdown();
+    const list = res?.data?.data ?? res?.data ?? res;
+    setBranchOptions(list || []);
+  };
+
+  const fetchFormSections = useCallback(async (signal = null) => {
+    setLoading(true);
+    try {
+      const res = await getFormSections(
+        {
+          search,
+          sort_by: sortColumn,
+          sort_order: sortDirection,
+          per_page: perPage,
+          page,
+        },
+        signal
+      );
+
+      if (signal?.aborted) return;
+
+      const payload = res?.data;
+      if (payload?.status === "true") {
+        setFormSections(payload.data || []);
+        setTotalRows(payload.pagination?.total || 0);
+      } else {
+        setFormSections([]);
+        setTotalRows(0);
+      }
+    } catch (err) {
+      if (!signal?.aborted) {
+        setFormSections([]);
+        setTotalRows(0);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [page, perPage, search, sortColumn, sortDirection]);
+
+  useEffect(() => {
+    loadBranches();
+  }, [isAdminOrOwner]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchFormSections(controller.signal);
+    return () => controller.abort();
+  }, [fetchFormSections]);
+
+  const debouncedSearch = useCallback(debounce((value) => {
+    setPage(1); setSearch(value);
+  }, 500), []);
+
+  const handleSearch = (e) => {
+    debouncedSearch(e.target.value);
+  };
+
+  const resetForm = () => {
+    setFormData({ id: null, branch_id: isAdminOrOwner ? "" : user?.branch_id || "", name: "", status: 1 });
+    setErrors({});
+    setModalMode("add");
+  };
+
+  const handleEdit = (row) => {
+    setModalMode("edit");
+    setFormData({ id: row.id, branch_id: isAdminOrOwner ? (row.branch_id || "") : (user?.branch_id || ""), name: row.name || "", status: row.status || 0 });
+    setErrors({});
+    const offcanvasEl = document.getElementById("offcanvas_form_section");
+    const offcanvas = new window.bootstrap.Offcanvas(offcanvasEl);
+    offcanvas.show();
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setErrors({});
+    setLoading(true);
+
+    try {
+      const payload = {
+        branch_id: isAdminOrOwner ? formData.branch_id : user?.branch_id,
+        name: formData.name,
+        status: formData.status,
+      };
+
+      if (modalMode === "edit") {
+        payload.form_section_id = formData.id;
+        await updateFormSection(payload);
+      } else {
+        await addFormSection(payload);
+      }
+
+      Swal.fire({ icon: "success", title: modalMode === "edit" ? "Updated" : "Created", text: `Form section ${modalMode === "edit" ? "updated" : "created"} successfully.`, confirmButtonColor: "#3085d6", timer: 2500, timerProgressBar: true, showConfirmButton: false });
+
+      const offcanvasEl = document.getElementById("offcanvas_form_section");
+      const offcanvas = window.bootstrap.Offcanvas.getInstance(offcanvasEl);
+      offcanvas?.hide();
+
+      resetForm();
+      fetchFormSections();
+    } catch (err) {
+      if (err.response?.status === 422) {
+        const apiErrors = err.response?.data?.errors;
+        const formatted = {};
+        Object.keys(apiErrors || {}).forEach((key) => {
+          formatted[key] = Array.isArray(apiErrors[key]) ? apiErrors[key].join(", ") : apiErrors[key];
+        });
+        setErrors(formatted);
+      } else {
+        Swal.fire({ icon: "error", title: "Error", text: "Something went wrong", timer: 3000, timerProgressBar: true, showConfirmButton: false });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStatusChange = async (row) => {
+    const newStatus = row.status === 1 ? 0 : 1;
+    await updateFormSectionStatus({ form_section_id: row.id, status: newStatus });
+    fetchFormSections();
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteId) return;
+    try {
+      const res = await deleteFormSection(deleteId);
+      if (res?.data?.status === "true") {
+        Swal.fire({ icon: "success", title: "Deleted", text: "Form section deleted successfully", timer: 2500, timerProgressBar: true, showConfirmButton: false });
+        setDeleteId(null);
+        const modalEl = document.getElementById("delete_form_section");
+        const modal = window.bootstrap.Modal.getInstance(modalEl);
+        modal?.hide();
+        fetchFormSections();
+      }
+    } catch (err) {
+      Swal.fire({ icon: "error", title: "Error", text: err.response?.data?.message || "Failed to delete form section", timer: 3000, timerProgressBar: true, showConfirmButton: false });
+    }
+  };
+
+  const handleView = async (id) => {
+    try {
+      const res = await viewFormSection(id);
+      if (res?.data?.status === "true") {
+        setViewData(res.data.data);
+        const modalEl = document.getElementById("view_form_section");
+        const modal = new window.bootstrap.Modal(modalEl);
+        modal.show();
+      }
+    } catch (err) {
+      Swal.fire({ icon: "error", title: "Error", text: "Unable to load record" });
+    }
+  };
+
+  const columns = [
+    { name: "Name", selector: (row) => row.name, sortField: "name", sortable: true },
+    ...(isAdminOrOwner ? [{ name: "Branch", selector: (row) => row.branch?.name || "-", sortable: false }] : []),
+    { name: "Status", cell: (row) => (<div className="form-check form-switch"><input type="checkbox" className="form-check-input" checked={row.status === 1} onChange={() => handleStatusChange(row)} /></div>), sortable: false },
+    { name: "Actions", cell: (row) => (<div className="dropdown table-action"><button className="action-icon btn btn-xs shadow btn-icon btn-outline-light" data-bs-toggle="dropdown"><i className="ti ti-dots-vertical"></i></button><div className="dropdown-menu dropdown-menu-end"><button className="dropdown-item" onClick={() => handleView(row.id)}><i className="ti ti-eye me-1"></i> View</button><button className="dropdown-item" onClick={() => handleEdit(row)}><i className="ti ti-edit text-blue me-1"></i> Edit</button><button className="dropdown-item" onClick={() => { setDeleteId(row.id); const modal = new window.bootstrap.Modal(document.getElementById('delete_form_section')); modal.show(); }}><i className="ti ti-trash me-1"></i> Delete</button></div></div>), sortable: false }
+  ];
+
+  return (
+    <>
+      <div className="d-flex align-items-center justify-content-between gap-2 mb-4 flex-wrap">
+        <div><h4 className="mb-1">Form Sections <span className="badge badge-soft-primary ms-2">{totalRows}</span></h4></div>
+        <div className="gap-2 d-flex align-items-center flex-wrap"><button className="btn btn-primary" onClick={() => { resetForm(); setModalMode("add"); const offcanvas = new window.bootstrap.Offcanvas(document.getElementById("offcanvas_form_section")); offcanvas.show(); }}>Add Form Section</button></div>
+      </div>
+
+      <div className="card border-0 rounded-0">
+        <div className="card-header d-flex align-items-center justify-content-between gap-2 flex-wrap">
+          <div className="input-icon input-icon-start position-relative"><span className="input-icon-addon text-dark"><i className="ti ti-search" /></span><input type="text" className="form-control" placeholder="Search" onChange={handleSearch} /></div>
+        </div>
+        <div className="card-body">
+          <DataTable columns={columns} data={formSections} progressPending={loading} progressComponent={<div className="text-center p-4">Loading form sections...</div>} pagination paginationServer paginationTotalRows={totalRows} paginationPerPage={perPage} paginationRowsPerPageOptions={[10,25,50,100]} onChangePage={(page) => setPage(page)} onChangeRowsPerPage={(newPerPage) => { setPerPage(newPerPage); setPage(1); }} sortServer onSort={(column, direction) => { if (column.sortField) { setSortColumn(column.sortField); setSortDirection(direction); } }} highlightOnHover responsive striped />
+        </div>
+      </div>
+
+      <div className="offcanvas offcanvas-end offcanvas-large" tabIndex="-1" id="offcanvas_form_section">
+        <div className="offcanvas-header border-bottom"><h5>{modalMode === "edit" ? "Edit Form Section" : "Add Form Section"}</h5><button type="button" className="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button></div>
+        <div className="offcanvas-body"><form onSubmit={handleSubmit}>
+          {isAdminOrOwner && <div className="mb-3"><label className="form-label">Branch <span className="text-danger">*</span></label><select name="branch_id" className={`form-control ${errors.branch_id ? 'is-invalid' : ''}`} value={formData.branch_id} onChange={(e) => setFormData({...formData, branch_id: e.target.value})} required><option value="">Select Branch</option>{branchOptions.map((branch) => (<option key={branch.id} value={branch.id}>{branch.name}</option>))}</select>{errors.branch_id && <small className="text-danger">{errors.branch_id}</small>}</div>}
+          <div className="mb-3"><label className="form-label">Name <span className="text-danger">*</span></label><input type="text" className={`form-control ${errors.name ? 'is-invalid' : ''}`} value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} required /><small className="text-danger">{errors.name}</small></div>
+          <div className="mb-3 form-check form-switch"><input className="form-check-input" type="checkbox" id="formSectionStatus" checked={formData.status === 1} onChange={(e) => setFormData({...formData, status: e.target.checked ? 1 : 0})} /><label className="form-check-label" htmlFor="formSectionStatus">Active</label></div>
+          <button className="btn btn-primary" type="submit" disabled={loading}>{loading ? "Saving..." : modalMode === "edit" ? "Update" : "Save"}</button>
+        </form></div>
+      </div>
+
+      <div className="modal fade" id="view_form_section" tabIndex="-1"><div className="modal-dialog modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">Form Section Details</h5><button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div className="modal-body">{viewData ? (<><p><strong>Name:</strong> {viewData.name}</p>{isAdminOrOwner && <p><strong>Branch:</strong> {viewData.branch?.name ?? '-'}</p>}<p><strong>Status:</strong> {viewData.status === 1 ? 'Active' : 'Inactive'}</p></>) : <p>Loading...</p>}</div></div></div></div>
+
+      <div className="modal fade" id="delete_form_section" tabIndex="-1"><div className="modal-dialog modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">Delete Form Section</h5><button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div className="modal-body"><p>Are you sure you want to delete this form section?</p></div><div className="modal-footer"><button className="btn btn-secondary" type="button" data-bs-dismiss="modal">Cancel</button><button className="btn btn-danger" type="button" onClick={confirmDelete}>Delete</button></div></div></div></div>
+    </>
+  );
+};
+
+export default FormSection;

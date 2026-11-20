@@ -1,0 +1,35 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('modules', function (Blueprint $table) {
+            $table->id();
+            $table->string('name', 255);
+            $table->string('slug', 255)->unique()->index();
+            $table->tinyInteger("is_module_for_crm")->index()->default(0)->comment('1=for crm,2=for lms, 3=for both');
+            $table->boolean('status')->index()->default(1)->comment('1=active,0=inactive');
+            $table->softDeletes();
+            // created_at with default current timestamp 
+            $table->dateTime('created_at')->default(DB::raw('CURRENT_TIMESTAMP'));
+            // updated_at with default current timestamp and auto-update 
+            $table->timestamp('updated_at')->default(DB::raw('CURRENT_TIMESTAMP'))->useCurrentOnUpdate();
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('modules');
+    }
+};
